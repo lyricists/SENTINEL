@@ -121,6 +121,7 @@ class SentenceRankAnalyzer:
         trialIndex = np.array([element[0] for element in dat_dict["log"][1:]])
         sentenceLog = np.array([element[9] for element in dat_dict["log"][1:]])
         toiLog = np.array([element[14] for element in dat_dict["log"][1:]])
+        conLog = np.array([element[12] for element in dat_dict["log"][1:]])
 
         sub_result = {}
 
@@ -132,6 +133,7 @@ class SentenceRankAnalyzer:
                     "Index": np.array([], dtype=int),
                     "Sentence": s,
                     "TOI": None,
+                    "Congruence": None,
                 }
                 continue
 
@@ -141,6 +143,7 @@ class SentenceRankAnalyzer:
                 "Index": trialIndex[Id[start_indices]].astype(int) - 1,
                 "Sentence": s,
                 "TOI": toiLog[Id[0]],
+                "Congruence": conLog[Id[0]],
             }
 
         return n, sub_result
@@ -219,6 +222,7 @@ class SentenceRankAnalyzer:
                         "sentence_index": int(sen_idx),
                         "sentence": sen_list[sen_idx],
                         "TOI": None if toi_val is None else str(toi_val),
+                        "Congruence": str(senIdx[sub][sen_idx]["Congruence"]),
                         "value": float(score[sen_idx]),
                         "pc_abs_diff": abs_diff[:, sen_idx].tolist(),
                     }
