@@ -24,7 +24,7 @@ for comparison, sentences in ranking_results.items():
         if "sentence" not in grand_scores[sen_idx]:
             grand_scores[sen_idx]["sentence"] = entry["sentence"]
             grand_scores[sen_idx]["TOI"] = entry.get("TOI", None)
-            grand_scores[sen_idx]["congruency"] = entry.get("congruency", None)
+            grand_scores[sen_idx]["Congruence"] = entry.get("Congruence", None)
 
         if "values" not in grand_scores[sen_idx]:
             grand_scores[sen_idx]["values"] = {}
@@ -43,7 +43,7 @@ for sen_idx, info in grand_scores.items():
             "sentence_index": sen_idx,
             "sentence": info["sentence"],
             "TOI": info["TOI"],
-            "congruency": info["congruency"],
+            "congruency": info["Congruence"],
             "Control_vs_Depressed": info["values"].get("Control_vs_Depressed", 0),
             "Control_vs_Suicidal": info["values"].get("Control_vs_Suicidal", 0),
             "Depressed_vs_Suicidal": info["values"].get("Depressed_vs_Suicidal", 0),
