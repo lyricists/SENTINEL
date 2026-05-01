@@ -154,6 +154,8 @@ def evaluate_loader(model, loader, criterion, device):
 def train_model(
     X_train,
     y_train,
+    X_val,
+    y_val,
     n_ch,
     n_time,
     n_classes=2,
@@ -162,10 +164,9 @@ def train_model(
     lr=1e-3,
     dropout=0.5,
     device="auto",
-    val_size=0.2,
     patience=10,
     min_delta=1e-4,
-    early_stop_metric="val_loss",
+    early_stop_metric="val_balanced_accuracy",
     save_curve_path=None,
     model_type="deepconvnet",
     verbose=True,
@@ -173,13 +174,11 @@ def train_model(
 ):
     device = resolve_device(device)
 
-    X_tr, X_val, y_tr, y_val = train_test_split(
-        X_train,
-        y_train,
-        test_size=val_size,
-        stratify=y_train,
-        random_state=seed,
-    )
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if device == "cuda":
+        torch.cuda.manual_seed_all(seed)
 
     model = build_model(
         model_type=model_type,
@@ -190,8 +189,8 @@ def train_model(
     ).to(device)
 
     train_dataset = TensorDataset(
-        torch.tensor(X_tr, dtype=torch.float32).unsqueeze(1),
-        torch.tensor(y_tr, dtype=torch.long),
+        torch.tensor(X_train, dtype=torch.float32).unsqueeze(1),
+        torch.tensor(y_train, dtype=torch.long),
     )
 
     val_dataset = TensorDataset(
@@ -199,16 +198,30 @@ def train_model(
         torch.tensor(y_val, dtype=torch.long),
     )
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+    )
+
+    class_counts = np.bincount(y_train, minlength=n_classes)
+    class_weights = len(y_train) / (n_classes * class_counts)
+    class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     history = {
         "train_loss": [],
         "val_loss": [],
         "train_acc": [],
+        "train_balanced_acc": [],
         "val_acc": [],
         "val_balanced_acc": [],
     }
@@ -255,6 +268,7 @@ def train_model(
 
         train_loss = running_loss / len(train_loader.dataset)
         train_acc = accuracy_score(train_true, train_pred)
+        train_bacc = balanced_accuracy_score(train_true, train_pred)
 
         val_loss, val_acc, val_bacc = evaluate_loader(
             model=model,
@@ -266,6 +280,7 @@ def train_model(
         history["train_loss"].append(float(train_loss))
         history["val_loss"].append(float(val_loss))
         history["train_acc"].append(float(train_acc))
+        history["train_balanced_acc"].append(float(train_bacc))
         history["val_acc"].append(float(val_acc))
         history["val_balanced_acc"].append(float(val_bacc))
 
@@ -278,10 +293,9 @@ def train_model(
 
         epoch_iter.set_postfix(
             {
-                "train_loss": f"{train_loss:.4f}",
+                "tr_loss": f"{train_loss:.4f}",
                 "val_loss": f"{val_loss:.4f}",
-                "train_acc": f"{train_acc:.3f}",
-                "val_acc": f"{val_acc:.3f}",
+                "tr_bacc": f"{train_bacc:.3f}",
                 "val_bacc": f"{val_bacc:.3f}",
             }
         )
@@ -307,8 +321,6 @@ def train_model(
 
     if best_state is not None:
         model.load_state_dict(best_state)
-
-    model = model.to(device)
 
     history["best_epoch"] = int(best_epoch)
     history["best_score"] = float(best_score)
@@ -487,19 +499,39 @@ def run_group_decoding_cv(
 
     fold_results = []
 
-    for fold, (train_idx, test_idx) in enumerate(skf.split(subjects, labels), start=1):
+    for fold, (trainval_idx, test_idx) in enumerate(
+        skf.split(subjects, labels), start=1
+    ):
 
-        train_subjects = subjects[train_idx]
+        trainval_subjects = subjects[trainval_idx]
         test_subjects = subjects[test_idx]
 
-        train_labels = labels[train_idx]
+        trainval_labels = labels[trainval_idx]
         test_labels = labels[test_idx]
 
+        # --------------------------------------------------------
+        # Subject-level train/validation split
+        # --------------------------------------------------------
+        train_idx, val_idx = train_test_split(
+            np.arange(len(trainval_subjects)),
+            test_size=val_size,
+            stratify=trainval_labels,
+            random_state=seed + fold,
+        )
+
+        train_subjects = trainval_subjects[train_idx]
+        val_subjects = trainval_subjects[val_idx]
+
+        train_labels = trainval_labels[train_idx]
+        val_labels = trainval_labels[val_idx]
+
+        # --------------------------------------------------------
+        # Build augmented training data from train subjects only
+        # --------------------------------------------------------
         X_train_all = []
         y_train_all = []
 
         skipped_train_subjects = []
-        skipped_test_subjects = []
 
         for sub, y in zip(train_subjects, train_labels):
 
@@ -528,6 +560,46 @@ def run_group_decoding_cv(
         X_train_all = np.concatenate(X_train_all, axis=0)
         y_train_all = np.concatenate(y_train_all, axis=0)
 
+        # --------------------------------------------------------
+        # Build validation data from validation subjects only
+        # --------------------------------------------------------
+        X_val_all = []
+        y_val_all = []
+
+        skipped_val_subjects = []
+
+        for sub, y in zip(val_subjects, val_labels):
+
+            X_aug, trial_indices = make_augmented_subject_data(
+                Dataset=Dataset,
+                trialInfo=trialInfo,
+                sub=int(sub),
+                comparison=comparison,
+                chunk_id=chunk_id,
+                feature_mode=feature_mode,
+                toi_mode=toi_mode,
+                n_aug=n_aug_test,
+                k=k,
+            )
+
+            if X_aug is None:
+                skipped_val_subjects.append(int(sub))
+                continue
+
+            X_val_all.append(X_aug)
+            y_val_all.append(np.full(X_aug.shape[0], int(y)))
+
+        if len(X_val_all) == 0:
+            raise RuntimeError(
+                "No validation data was generated. Check trial selection."
+            )
+
+        X_val_all = np.concatenate(X_val_all, axis=0)
+        y_val_all = np.concatenate(y_val_all, axis=0)
+
+        # --------------------------------------------------------
+        # Train model using explicit validation set
+        # --------------------------------------------------------
         if curve_dir is not None:
             curve_path = os.path.join(
                 curve_dir,
@@ -539,27 +611,33 @@ def run_group_decoding_cv(
         model, train_history = train_model(
             X_train=X_train_all,
             y_train=y_train_all,
+            X_val=X_val_all,
+            y_val=y_val_all,
             n_ch=n_ch,
             n_time=n_time,
+            n_classes=2,
             epochs=epochs,
             batch_size=batch_size,
             lr=lr,
             dropout=dropout,
-            model_type=model_type,
             device=device,
-            val_size=val_size,
             patience=patience,
             min_delta=min_delta,
             early_stop_metric=early_stop_metric,
             save_curve_path=curve_path,
+            model_type=model_type,
             verbose=verbose,
             seed=seed + fold,
         )
 
+        # --------------------------------------------------------
+        # Test subject-level majority vote
+        # --------------------------------------------------------
         subject_preds = []
         subject_probs = []
         subject_true = []
         subject_details = []
+        skipped_test_subjects = []
 
         for sub, y in zip(test_subjects, test_labels):
 
@@ -624,8 +702,10 @@ def run_group_decoding_cv(
             "y_pred": [int(x) for x in subject_preds],
             "y_prob_class1": [float(x) for x in subject_probs],
             "train_subjects": [int(x) for x in train_subjects],
+            "val_subjects": [int(x) for x in val_subjects],
             "test_subjects": [int(x) for x in test_subjects],
             "skipped_train_subjects": skipped_train_subjects,
+            "skipped_val_subjects": skipped_val_subjects,
             "skipped_test_subjects": skipped_test_subjects,
             "subject_details": subject_details,
             "model_type": model_type,
