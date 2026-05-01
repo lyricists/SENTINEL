@@ -32,42 +32,43 @@ COMMON_ARGS=(
     --val_size 0.1
     --curve_dir "$SAVE_PATH/curves"
     --chName None
+    --early_stop_metric val_balanced_accuracy
     --verbose
 )
 
 mkdir -p "$SAVE_PATH/curves"
 
-# echo ""
-# echo "Running UNIFORM bootstrap (ALL TOI)"
-# echo ""
+echo ""
+echo "Running UNIFORM bootstrap (ALL TOI)"
+echo ""
 
-# python3 "$PYTHON_SCRIPT" \
-#     "${COMMON_ARGS[@]}" \
-#     --feature_mode uniform \
-#     --toi_mode all \
-#     --epochs 60 \
-#     --patience 8
+python3 "$PYTHON_SCRIPT" \
+    "${COMMON_ARGS[@]}" \
+    --feature_mode uniform \
+    --toi_mode all \
+    --epochs 60 \
+    --patience 8
 
-# echo ""
-# echo "Running CONTRAST bootstrap (ALL TOI)"
-# echo ""
+echo ""
+echo "Running CONTRAST bootstrap (ALL TOI)"
+echo ""
 
-# python3 "$PYTHON_SCRIPT" \
-#     "${COMMON_ARGS[@]}" \
-#     --feature_mode contrast \
-#     --toi_mode all \
-#     --epochs 60 \
-#     --patience 8
+python3 "$PYTHON_SCRIPT" \
+    "${COMMON_ARGS[@]}" \
+    --feature_mode contrast \
+    --toi_mode all \
+    --epochs 60 \
+    --patience 8
 
-# echo ""
-# echo "Running sentence response (ALL TOI)"
-# echo ""
+echo ""
+echo "Running sentence response (ALL TOI)"
+echo ""
 
 python3 "$PYTHON_SCRIPT" \
     "${COMMON_ARGS[@]}" \
     --feature_mode sentence_response \
     --toi_mode all \
-    --epochs 100 \
+    --epochs 60 \
     --patience 50
 
 echo ""
