@@ -1,15 +1,15 @@
 # ============================================================
 # Convert sentence ranking JSON -> Excel
 # Works for:
-#   1) sentence_ranking.json
+#   1) PCA sentence_ranking.json
 #   2) sentence_ranking_grand_rank.json
+#   3) DL sentence_ranking_eegnet/deepconvnet JSON
 # ============================================================
 
 import json
 import pandas as pd
 
-
-json_path = "/Users/woojaejeong/Desktop/Data/USC/DARPA-NEAT/Code/SENTINEL/Results/sentence_ranking_grand_rank.json"
+json_path = "/Users/woojaejeong/Desktop/Data/USC/DARPA-NEAT/Code/SENTINEL/Results/sentence_ranking_deepconvnet_val_balanced_accuracy.json"
 excel_path = json_path.replace(".json", ".xlsx")
 
 
@@ -36,9 +36,34 @@ def expand_pc_columns(df):
     return df
 
 
+def reorder_columns(df):
+    """Put key ranking columns first if they exist."""
+
+    key_cols = [
+        "rank",
+        "sentence_index",
+        "sentence",
+        "TOI",
+        "Congruence",
+        "value",
+        "accuracy",
+        "balanced_accuracy",
+        "Control_accuracy",
+        "Depressed_accuracy",
+        "Suicidal_accuracy",
+        "mean_prob_class_1",
+        "n_subjects",
+    ]
+
+    existing_key_cols = [col for col in key_cols if col in df.columns]
+    other_cols = [col for col in df.columns if col not in existing_key_cols]
+
+    return df[existing_key_cols + other_cols]
+
+
 with pd.ExcelWriter(excel_path) as writer:
 
-    # Case 1: sentence_ranking.json
+    # Case 1: sentence_ranking.json or DL sentence ranking JSON
     # Structure: {"Control_vs_Depressed": [...], ...}
     if isinstance(ranking_results, dict):
 
@@ -46,6 +71,7 @@ with pd.ExcelWriter(excel_path) as writer:
 
             df = pd.DataFrame(rows)
             df = expand_pc_columns(df)
+            df = reorder_columns(df)
 
             sheet_name = comparison[:31]  # Excel sheet-name limit
             df.to_excel(writer, sheet_name=sheet_name, index=False)
@@ -56,6 +82,7 @@ with pd.ExcelWriter(excel_path) as writer:
 
         df = pd.DataFrame(ranking_results)
         df = expand_pc_columns(df)
+        df = reorder_columns(df)
 
         df.to_excel(writer, sheet_name="Grand_Ranking", index=False)
 
