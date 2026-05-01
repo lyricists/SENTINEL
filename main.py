@@ -68,6 +68,9 @@ def main(args):
     Dataset = load_dataset(
         fPath=args.fPath,
         fileName=args.fileName,
+        bPath=args.bPath,
+        chName=args.chName,
+        t_end_ms=args.t_end_ms,
     )
 
     group_indices = load_subject_groups(
@@ -106,7 +109,8 @@ def main(args):
                 f"{comparison}_"
                 f"chunk{chunk_id + 1}_"
                 f"{args.feature_mode}_"
-                f"{args.toi_mode}"
+                f"{args.toi_mode}_"
+                f"{args.model_type}"
             )
 
             print("\n" + "=" * 80)
@@ -140,6 +144,7 @@ def main(args):
                 min_delta=args.min_delta,
                 curve_dir=curve_dir,
                 verbose=args.verbose,
+                model_type=args.model_type,
             )
 
             result_obj = {
@@ -152,6 +157,7 @@ def main(args):
                 "toi_mode": args.toi_mode,
                 "fold_results": fold_results,
                 "summary": summarize_fold_results(fold_results),
+                "model_type": args.model_type,
             }
 
             all_results[key] = result_obj
@@ -218,7 +224,7 @@ if __name__ == "__main__":
         "--feature_mode",
         type=str,
         default="uniform",
-        choices=["uniform", "contrast"],
+        choices=["uniform", "contrast", "sentence_response"],
     )
 
     parser.add_argument(
@@ -231,6 +237,18 @@ if __name__ == "__main__":
     parser.add_argument("--n_aug_train", type=int, default=100)
     parser.add_argument("--n_aug_test", type=int, default=50)
     parser.add_argument("--k", type=int, default=12)
+
+    parser.add_argument(
+        "--chName",
+        type=str,
+        default="GoodChannel.mat",
+    )
+
+    parser.add_argument(
+        "--t_end_ms",
+        type=int,
+        default=1000,
+    )
 
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--epochs", type=int, default=60)
@@ -252,6 +270,20 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--model_type",
+        type=str,
+        default="eegnet",
+        choices=["deepconvnet", "eegnet"],
+    )
+
+    parser.add_argument(
+        "--early_stop_metric",
+        type=str,
+        default="val_balanced_accuracy",
+        choices=["val_loss", "val_balanced_accuracy"],
+    )
+
+    parser.add_argument(
         "--curve_dir",
         type=str,
         default=None,
@@ -263,4 +295,7 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+    if args.chName.lower() == "none":
+        args.chName = None
+
     main(args)
