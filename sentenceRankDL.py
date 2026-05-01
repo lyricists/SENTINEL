@@ -3,6 +3,10 @@
 # EEGNet / DeepConvNet
 # Subject-level CV + subject-level validation split
 # Output format matches previous sentence_ranking.json
+#
+# Early stopping options:
+#   early_stop_metric="val_loss"
+#   early_stop_metric="val_balanced_accuracy"
 # ============================================================
 
 import os
@@ -49,6 +53,9 @@ class SentenceNNRankAnalyzer:
         lr: float = 1e-3,
         max_epochs: int = 80,
         patience: int = 10,
+        val_size: float = 0.1,
+        min_delta: float = 1e-4,
+        early_stop_metric: str = "val_balanced_accuracy",
         random_state: int = 42,
         device: str = "auto",
     ):
@@ -68,8 +75,16 @@ class SentenceNNRankAnalyzer:
         self.lr = lr
         self.max_epochs = max_epochs
         self.patience = patience
+        self.val_size = val_size
+        self.min_delta = min_delta
+        self.early_stop_metric = early_stop_metric
         self.random_state = random_state
         self.device = self.resolve_device(device)
+
+        if self.early_stop_metric not in ["val_loss", "val_balanced_accuracy"]:
+            raise ValueError(
+                "early_stop_metric must be 'val_loss' or 'val_balanced_accuracy'"
+            )
 
     # ------------------------------------------------------------
     # Device
@@ -104,7 +119,7 @@ class SentenceNNRankAnalyzer:
         Expected Dataset shape:
             channel x time x trial x subject
 
-        This version uses all 64 channels.
+        This version uses all channels.
         No good-channel selection is applied.
         """
 
@@ -112,6 +127,10 @@ class SentenceNNRankAnalyzer:
             Dataset = pickle.load(file)
 
         Dataset = np.asarray(Dataset, dtype=np.float32)
+
+        Dataset = Dataset[
+            :, np.arange(300), :, :
+        ]  # Crop to 300 time points (−200 to 1000 ms at 250 Hz)
 
         with open(os.path.join(self.bPath, self.senName), "r") as file:
             sen_list = list(json.load(file).keys())
@@ -328,16 +347,16 @@ class SentenceNNRankAnalyzer:
     def build_model(self, n_chans, n_times):
         if self.model_name == "deepconvnet":
             return DeepConvNet(
-                n_chans=n_chans,
-                n_times=n_times,
-                n_outputs=2,
+                n_ch=n_chans,
+                n_time=n_times,
+                n_classes=2,
             )
 
         elif self.model_name == "eegnet":
             return EEGNet(
-                n_chans=n_chans,
-                n_times=n_times,
-                n_outputs=2,
+                n_ch=n_chans,
+                n_time=n_times,
+                n_classes=2,
             )
 
         else:
@@ -370,25 +389,55 @@ class SentenceNNRankAnalyzer:
         optimizer = torch.optim.Adam(model.parameters(), lr=self.lr)
         criterion = nn.CrossEntropyLoss()
 
-        best_loss = np.inf
+        if self.early_stop_metric == "val_loss":
+            best_score = np.inf
+        else:
+            best_score = -np.inf
+
         best_state = None
+        best_epoch = 0
         wait = 0
 
         for epoch in range(self.max_epochs):
+            # --------------------------------------------------------
+            # Training
+            # --------------------------------------------------------
             model.train()
+
+            train_loss = 0.0
+            train_true = []
+            train_pred = []
 
             for xb, yb in train_loader:
                 xb = xb.to(self.device)
                 yb = yb.to(self.device)
 
                 optimizer.zero_grad()
+
                 logits = model(xb)
                 loss = criterion(logits, yb)
+
                 loss.backward()
                 optimizer.step()
 
+                pred = torch.argmax(logits, dim=1)
+
+                train_loss += loss.item() * len(yb)
+                train_true.extend(yb.cpu().numpy())
+                train_pred.extend(pred.cpu().numpy())
+
+            train_loss /= len(train_loader.dataset)
+            train_acc = accuracy_score(train_true, train_pred)
+            train_bacc = balanced_accuracy_score(train_true, train_pred)
+
+            # --------------------------------------------------------
+            # Validation
+            # --------------------------------------------------------
             model.eval()
+
             val_loss = 0.0
+            val_true = []
+            val_pred = []
 
             with torch.no_grad():
                 for xb, yb in val_loader:
@@ -397,12 +446,29 @@ class SentenceNNRankAnalyzer:
 
                     logits = model(xb)
                     loss = criterion(logits, yb)
+                    pred = torch.argmax(logits, dim=1)
+
                     val_loss += loss.item() * len(yb)
+                    val_true.extend(yb.cpu().numpy())
+                    val_pred.extend(pred.cpu().numpy())
 
-            val_loss /= len(y_val)
+            val_loss /= len(val_loader.dataset)
+            val_acc = accuracy_score(val_true, val_pred)
+            val_bacc = balanced_accuracy_score(val_true, val_pred)
 
-            if val_loss < best_loss:
-                best_loss = val_loss
+            # --------------------------------------------------------
+            # Early stopping criterion
+            # --------------------------------------------------------
+            if self.early_stop_metric == "val_loss":
+                current_score = val_loss
+                improved = current_score < best_score - self.min_delta
+            else:
+                current_score = val_bacc
+                improved = current_score > best_score + self.min_delta
+
+            if improved:
+                best_score = current_score
+                best_epoch = epoch + 1
                 best_state = {
                     k: v.detach().cpu().clone() for k, v in model.state_dict().items()
                 }
@@ -410,7 +476,25 @@ class SentenceNNRankAnalyzer:
             else:
                 wait += 1
 
+            print(
+                f"Epoch {epoch + 1:03d}/{self.max_epochs} | "
+                f"train_loss={train_loss:.4f} | "
+                f"train_acc={train_acc:.4f} | "
+                f"train_bacc={train_bacc:.4f} | "
+                f"val_loss={val_loss:.4f} | "
+                f"val_acc={val_acc:.4f} | "
+                f"val_bacc={val_bacc:.4f} | "
+                f"best_{self.early_stop_metric}={best_score:.4f} | "
+                f"best_epoch={best_epoch} | "
+                f"wait={wait}/{self.patience}"
+            )
+
             if wait >= self.patience:
+                print(
+                    f"Early stopping at epoch {epoch + 1}. "
+                    f"Best epoch = {best_epoch}, "
+                    f"best {self.early_stop_metric} = {best_score:.4f}"
+                )
                 break
 
         if best_state is not None:
@@ -505,7 +589,7 @@ class SentenceNNRankAnalyzer:
             # Subject-level train/validation split
             train_sub_idx, val_sub_idx = train_test_split(
                 train_idx,
-                test_size=0.2,
+                test_size=self.val_size,
                 stratify=y[train_idx],
                 random_state=self.random_state + fold,
             )
@@ -553,6 +637,13 @@ class SentenceNNRankAnalyzer:
             )
 
             pred_all, prob_all = self.predict_model(model, X_test_all)
+
+            print(
+                "Test prediction counts:",
+                np.bincount(pred_all, minlength=2),
+                "| True counts:",
+                np.bincount(y_test_all, minlength=2),
+            )
 
             # Store held-out sentence-level predictions
             for i in range(len(pred_all)):
@@ -712,6 +803,8 @@ class SentenceNNRankAnalyzer:
             "n_channels": int(n_ch),
             "n_times": int(n_time),
             "n_splits": int(self.n_splits),
+            "val_size": float(self.val_size),
+            "early_stop_metric": self.early_stop_metric,
             "subject_metrics": subject_metrics,
             "fold_metrics": fold_metrics,
             "subject_predictions": [
@@ -746,6 +839,8 @@ class SentenceNNRankAnalyzer:
 
     def run(self):
         print(f"Device: {self.device}")
+        print(f"Early stopping metric: {self.early_stop_metric}")
+        print(f"Validation subject split size: {self.val_size}")
         print("Loading data...")
 
         Dataset, group_indices, sen_list = self.load_data()
@@ -785,14 +880,15 @@ class SentenceNNRankAnalyzer:
                 group_b=group_b,
             )
 
-            # Same format as previous sentence_ranking.json
             ranking_results[pair_key] = sentence_ranking
-
-            # Extra metrics saved separately
             metrics_results[pair_key] = metrics_result
 
-        ranking_filename = f"sentence_ranking_{self.model_name}.json"
-        metrics_filename = f"sentence_ranking_{self.model_name}_metrics.json"
+        ranking_filename = (
+            f"sentence_ranking_{self.model_name}_{self.early_stop_metric}.json"
+        )
+        metrics_filename = (
+            f"sentence_ranking_{self.model_name}_{self.early_stop_metric}_metrics.json"
+        )
 
         self.save_json(ranking_results, ranking_filename)
         self.save_json(metrics_results, metrics_filename)
@@ -807,12 +903,15 @@ class SentenceNNRankAnalyzer:
 if __name__ == "__main__":
     analyzer = SentenceNNRankAnalyzer(
         n_sub=137,
-        model_name="eegnet",  # "eegnet" or "deepconvnet"
+        model_name="deepconvnet",  # "eegnet" or "deepconvnet"
         n_splits=5,
         batch_size=64,
         lr=1e-3,
-        max_epochs=80,
+        max_epochs=40,
         patience=10,
+        val_size=0.1,
+        min_delta=1e-4,
+        early_stop_metric="val_balanced_accuracy",  # "val_loss" or "val_balanced_accuracy"
         random_state=42,
         device="auto",
     )
