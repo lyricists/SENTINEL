@@ -1,5 +1,6 @@
 # ============================================================
 # Plot metric across chunks from GroupDecoding summary JSONs
+# Select desired feature modes and TOI modes from command line
 # ============================================================
 
 import os
@@ -14,7 +15,14 @@ def load_summary(path):
         return json.load(f)
 
 
-def extract_metric_by_chunk(summary_data, comparison, feature_mode, toi_mode, metric):
+def extract_metric_by_chunk(
+    summary_data,
+    comparison,
+    feature_mode,
+    toi_mode,
+    metric,
+    model_type,
+):
     n_chunks = 4 if toi_mode == "all" else 3
 
     chunks = []
@@ -22,7 +30,7 @@ def extract_metric_by_chunk(summary_data, comparison, feature_mode, toi_mode, me
     stds = []
 
     for chunk in range(1, n_chunks + 1):
-        key = f"{comparison}_chunk{chunk}_{feature_mode}_{toi_mode}"
+        key = f"{comparison}_chunk{chunk}_{feature_mode}_{toi_mode}_{model_type}"
 
         chunks.append(chunk)
 
@@ -38,6 +46,25 @@ def extract_metric_by_chunk(summary_data, comparison, feature_mode, toi_mode, me
         stds.append(metric_info["std"])
 
     return np.array(chunks), np.array(means), np.array(stds)
+
+
+def make_row_settings(feature_modes, toi_modes):
+    row_settings = []
+
+    label_map = {
+        "uniform": "Uniform",
+        "contrast": "Contrast",
+        "sentence_response": "Sentence Response",
+        "all": "All",
+        "non_bio": "Non-Bio",
+    }
+
+    for feature_mode in feature_modes:
+        for toi_mode in toi_modes:
+            row_title = f"{label_map[feature_mode]} {label_map[toi_mode]}"
+            row_settings.append((row_title, feature_mode, toi_mode))
+
+    return row_settings
 
 
 def main(args):
@@ -64,41 +91,37 @@ def main(args):
         "accuracy": "Accuracy",
     }[metric]
 
-    summary_files = {
-        "Uniform All": "summary_uniform_all.json",
-        "Uniform Non-Bio": "summary_uniform_non_bio.json",
-        "Contrast All": "summary_contrast_all.json",
-        "Contrast Non-Bio": "summary_contrast_non_bio.json",
-    }
-
     comparisons = [
         ("Control_vs_Depressed", "C vs D"),
         ("Depressed_vs_Suicidal", "D vs S"),
         ("Control_vs_Suicidal", "C vs S"),
     ]
 
-    row_settings = [
-        ("Uniform All", "uniform", "all"),
-        ("Uniform Non-Bio", "uniform", "non_bio"),
-        ("Contrast All", "contrast", "all"),
-        ("Contrast Non-Bio", "contrast", "non_bio"),
-    ]
+    row_settings = make_row_settings(
+        feature_modes=args.feature_modes,
+        toi_modes=args.toi_modes,
+    )
+
+    n_rows = len(row_settings)
+    n_cols = len(comparisons)
 
     summary_data = {}
 
-    for row_name, filename in summary_files.items():
-        path = os.path.join(args.result_dir, filename)
+    for row_title, feature_mode, toi_mode in row_settings:
+        summary_file = f"summary_{feature_mode}_{toi_mode}.json"
+        path = os.path.join(args.result_dir, summary_file)
 
         if not os.path.exists(path):
             raise FileNotFoundError(f"Missing file: {path}")
 
-        summary_data[row_name] = load_summary(path)
+        summary_data[row_title] = load_summary(path)
 
     fig, axes = plt.subplots(
-        nrows=4,
-        ncols=3,
-        figsize=(15, 12),
+        nrows=n_rows,
+        ncols=n_cols,
+        figsize=(5 * n_cols, 3.2 * n_rows),
         sharey=True,
+        squeeze=False,
     )
 
     for row_idx, (row_title, feature_mode, toi_mode) in enumerate(row_settings):
@@ -115,6 +138,7 @@ def main(args):
                 feature_mode=feature_mode,
                 toi_mode=toi_mode,
                 metric=metric,
+                model_type=args.model_type,
             )
 
             ax.plot(chunks, mean_vals, marker="o", linewidth=2)
@@ -123,7 +147,7 @@ def main(args):
             ax.axhline(0.5, linestyle="--", linewidth=1)
 
             ax.set_xticks(chunks)
-            ax.set_ylim(0.0, 1.0)
+            ax.set_ylim(args.ymin, args.ymax)
 
             if row_idx == 0:
                 ax.set_title(col_title, fontsize=14)
@@ -131,10 +155,13 @@ def main(args):
             if col_idx == 0:
                 ax.set_ylabel(f"{row_title}\n{metric_label}", fontsize=12)
 
-            if row_idx == 3:
+            if row_idx == n_rows - 1:
                 ax.set_xlabel("Chunk number", fontsize=12)
 
             ax.grid(True, alpha=0.3)
+
+    feature_text = "_".join(args.feature_modes)
+    toi_text = "_".join(args.toi_modes)
 
     plt.suptitle(
         f"Mean {metric_label} Across Folds by Sentence-Ranking Chunk",
@@ -143,19 +170,23 @@ def main(args):
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
 
-    # out_png = os.path.join(args.result_dir, f"{metric}_summary_4x3.png")
-    # out_pdf = os.path.join(args.result_dir, f"{metric}_summary_4x3.pdf")
+    if args.save:
+        out_png = os.path.join(
+            args.result_dir,
+            f"{metric}_{feature_text}_{toi_text}_{args.model_type}_summary.png",
+        )
+        out_pdf = out_png.replace(".png", ".pdf")
 
-    # plt.savefig(out_png, dpi=300)
-    # plt.savefig(out_pdf)
+        plt.savefig(out_png, dpi=300)
+        plt.savefig(out_pdf)
+
+        print(f"Saved PNG: {out_png}")
+        print(f"Saved PDF: {out_pdf}")
 
     if args.show:
         plt.show()
     else:
         plt.close()
-
-    # print(f"Saved PNG: {out_png}")
-    # print(f"Saved PDF: {out_pdf}")
 
 
 if __name__ == "__main__":
@@ -185,7 +216,47 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--feature_modes",
+        nargs="+",
+        default=["uniform"],
+        choices=["uniform", "contrast", "sentence_response"],
+        help="Choose one or more: uniform contrast sentence_response",
+    )
+
+    parser.add_argument(
+        "--toi_modes",
+        nargs="+",
+        default=["all", "non_bio"],
+        choices=["all", "non_bio"],
+        help="Choose one or more: all non_bio",
+    )
+
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        default="deepconvnet",
+        choices=["deepconvnet", "eegnet"],
+    )
+
+    parser.add_argument(
+        "--ymin",
+        type=float,
+        default=0.0,
+    )
+
+    parser.add_argument(
+        "--ymax",
+        type=float,
+        default=1.0,
+    )
+
+    parser.add_argument(
         "--show",
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--save",
         action="store_true",
     )
 
