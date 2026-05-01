@@ -12,7 +12,6 @@ import mat73
 from tqdm import tqdm
 from joblib import Parallel, delayed
 
-
 # ------------------------------------------------------------
 # Paths
 # ------------------------------------------------------------
@@ -20,7 +19,9 @@ from joblib import Parallel, delayed
 logPath = "/Users/woojaejeong/Desktop/Data/USC/DARPA-NEAT/Data/Preprocessed data/Log/"
 save_path = "/Users/woojaejeong/Desktop/Data/USC/DARPA-NEAT/Code/SENTINEL/Results/"
 
-ranking_file = os.path.join(save_path, "sentence_ranking.json")
+ranking_file = os.path.join(
+    save_path, "sentence_ranking_deepconvnet_val_balanced_accuracy.json"
+)
 logFile = "*sen*"
 
 n_sub = 137
@@ -134,8 +135,8 @@ trialInfo = {
 # Save
 # ------------------------------------------------------------
 
-out_pkl = os.path.join(save_path, "trial_sentence_rank_info.pkl")
-out_json = os.path.join(save_path, "trial_sentence_rank_info.json")
+out_pkl = os.path.join(save_path, "trial_sentence_rank_info_dl.pkl")
+out_json = os.path.join(save_path, "trial_sentence_rank_info_dl.json")
 
 with open(out_pkl, "wb") as f:
     pickle.dump(trialInfo, f)
