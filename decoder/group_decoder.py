@@ -17,14 +17,52 @@ from sklearn.metrics import (
 )
 
 from model.deepconvnet import DeepConvNet
+from model.eegnet import EEGNet
+
 from utility.bootstrap import (
     uniform_bootstrap_trials,
     congruence_contrast_bootstrap,
+    sentence_response_average,
 )
 from utility.trial_selector import (
     get_rank_chunk_trials,
     split_trials_by_congruence,
 )
+
+
+def build_model(
+    model_type,
+    n_ch,
+    n_time,
+    n_classes=2,
+    dropout=0.5,
+):
+    model_type = str(model_type).lower()
+
+    if model_type == "deepconvnet":
+        model = DeepConvNet(
+            n_ch=n_ch,
+            n_time=n_time,
+            n_classes=n_classes,
+            dropout=dropout,
+        )
+
+    elif model_type == "eegnet":
+        model = EEGNet(
+            n_ch=n_ch,
+            n_time=n_time,
+            n_classes=n_classes,
+            F1=8,
+            D=2,
+            F2=16,
+            kernel_length=64,
+            dropout=dropout,
+        )
+
+    else:
+        raise ValueError("model_type must be 'deepconvnet' or 'eegnet'.")
+
+    return model
 
 
 def resolve_device(device="auto"):
@@ -70,8 +108,14 @@ def save_learning_curve(history, save_path):
     plt.figure(figsize=(8, 5))
     plt.plot(epochs, history["train_acc"], label="Train accuracy")
     plt.plot(epochs, history["val_acc"], label="Validation accuracy")
+
+    if "val_balanced_acc" in history:
+        plt.plot(
+            epochs, history["val_balanced_acc"], label="Validation balanced accuracy"
+        )
+
     plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
+    plt.ylabel("Score")
     plt.title("Learning Curve - Accuracy")
     plt.legend()
     plt.tight_layout()
@@ -102,8 +146,9 @@ def evaluate_loader(model, loader, criterion, device):
 
     avg_loss = total_loss / len(loader.dataset)
     acc = accuracy_score(all_true, all_pred)
+    bacc = balanced_accuracy_score(all_true, all_pred)
 
-    return avg_loss, acc
+    return avg_loss, acc, bacc
 
 
 def train_model(
@@ -120,7 +165,9 @@ def train_model(
     val_size=0.2,
     patience=10,
     min_delta=1e-4,
+    early_stop_metric="val_loss",
     save_curve_path=None,
+    model_type="deepconvnet",
     verbose=True,
     seed=42,
 ):
@@ -134,7 +181,8 @@ def train_model(
         random_state=seed,
     )
 
-    model = DeepConvNet(
+    model = build_model(
+        model_type=model_type,
         n_ch=n_ch,
         n_time=n_time,
         n_classes=n_classes,
@@ -151,17 +199,8 @@ def train_model(
         torch.tensor(y_val, dtype=torch.long),
     )
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-    )
-
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-    )
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
@@ -171,9 +210,20 @@ def train_model(
         "val_loss": [],
         "train_acc": [],
         "val_acc": [],
+        "val_balanced_acc": [],
     }
 
-    best_val_loss = np.inf
+    if early_stop_metric == "val_loss":
+        best_score = np.inf
+        mode = "min"
+    elif early_stop_metric == "val_balanced_accuracy":
+        best_score = -np.inf
+        mode = "max"
+    else:
+        raise ValueError(
+            "early_stop_metric must be 'val_loss' or 'val_balanced_accuracy'"
+        )
+
     best_state = None
     bad_epochs = 0
     best_epoch = 0
@@ -206,7 +256,7 @@ def train_model(
         train_loss = running_loss / len(train_loader.dataset)
         train_acc = accuracy_score(train_true, train_pred)
 
-        val_loss, val_acc = evaluate_loader(
+        val_loss, val_acc, val_bacc = evaluate_loader(
             model=model,
             loader=val_loader,
             criterion=criterion,
@@ -217,6 +267,14 @@ def train_model(
         history["val_loss"].append(float(val_loss))
         history["train_acc"].append(float(train_acc))
         history["val_acc"].append(float(val_acc))
+        history["val_balanced_acc"].append(float(val_bacc))
+
+        if early_stop_metric == "val_loss":
+            current_score = val_loss
+            improved = current_score < best_score - min_delta
+        else:
+            current_score = val_bacc
+            improved = current_score > best_score + min_delta
 
         epoch_iter.set_postfix(
             {
@@ -224,11 +282,12 @@ def train_model(
                 "val_loss": f"{val_loss:.4f}",
                 "train_acc": f"{train_acc:.3f}",
                 "val_acc": f"{val_acc:.3f}",
+                "val_bacc": f"{val_bacc:.3f}",
             }
         )
 
-        if val_loss < best_val_loss - min_delta:
-            best_val_loss = val_loss
+        if improved:
+            best_score = current_score
             best_state = {
                 k: v.detach().cpu().clone() for k, v in model.state_dict().items()
             }
@@ -241,7 +300,8 @@ def train_model(
             if verbose:
                 print(
                     f"Early stopping at epoch {epoch}. "
-                    f"Best epoch = {best_epoch}, best val loss = {best_val_loss:.4f}"
+                    f"Best epoch = {best_epoch}, "
+                    f"best {early_stop_metric} = {best_score:.4f}"
                 )
             break
 
@@ -251,7 +311,13 @@ def train_model(
     model = model.to(device)
 
     history["best_epoch"] = int(best_epoch)
-    history["best_val_loss"] = float(best_val_loss)
+    history["best_score"] = float(best_score)
+    history["early_stop_metric"] = early_stop_metric
+
+    if early_stop_metric == "val_loss":
+        history["best_val_loss"] = float(best_score)
+    else:
+        history["best_val_balanced_accuracy"] = float(best_score)
 
     if save_curve_path is not None:
         save_learning_curve(history, save_curve_path)
@@ -343,8 +409,18 @@ def make_augmented_subject_data(
             k=k,
         )
 
+    elif feature_mode == "sentence_response":
+        X_aug = sentence_response_average(
+            X=X_sub,
+            trialInfo=trialInfo,
+            sub=int(sub),
+            trial_indices=trial_indices,
+        )
+
     else:
-        raise ValueError("feature_mode must be 'uniform' or 'contrast'.")
+        raise ValueError(
+            "feature_mode must be 'uniform', 'contrast', or 'sentence_response'."
+        )
 
     return X_aug, trial_indices
 
@@ -359,6 +435,7 @@ def run_group_decoding_cv(
     chunk_id,
     feature_mode="uniform",
     toi_mode="all",
+    model_type="eegnet",
     n_aug_train=200,
     n_aug_test=100,
     k=12,
@@ -372,9 +449,11 @@ def run_group_decoding_cv(
     val_size=0.2,
     patience=10,
     min_delta=1e-4,
+    early_stop_metric="val_balanced_accuracy",
     curve_dir=None,
     verbose=True,
 ):
+
     device = resolve_device(device)
     print(f"Using device: {device}")
 
@@ -452,7 +531,7 @@ def run_group_decoding_cv(
         if curve_dir is not None:
             curve_path = os.path.join(
                 curve_dir,
-                f"{comparison}_chunk{chunk_id + 1}_{feature_mode}_{toi_mode}_fold{fold}.png",
+                f"{comparison}_chunk{chunk_id + 1}_{feature_mode}_{toi_mode}_{model_type}_fold{fold}.png",
             )
         else:
             curve_path = None
@@ -466,10 +545,12 @@ def run_group_decoding_cv(
             batch_size=batch_size,
             lr=lr,
             dropout=dropout,
+            model_type=model_type,
             device=device,
             val_size=val_size,
             patience=patience,
             min_delta=min_delta,
+            early_stop_metric=early_stop_metric,
             save_curve_path=curve_path,
             verbose=verbose,
             seed=seed + fold,
@@ -547,6 +628,7 @@ def run_group_decoding_cv(
             "skipped_train_subjects": skipped_train_subjects,
             "skipped_test_subjects": skipped_test_subjects,
             "subject_details": subject_details,
+            "model_type": model_type,
         }
 
         fold_results.append(fold_result)
