@@ -2,10 +2,10 @@
 
 # ============================================================
 # SENTINEL Group Classification Runner
-# EEGNet version
+# DeepConvNet version
 # ============================================================
 
-echo "Starting SENTINEL group decoding pipeline with EEGNet..."
+echo "Starting SENTINEL group decoding pipeline with DeepConvNet..."
 echo "-------------------------------------------"
 
 PROJECT_PATH="/Users/woojaejeong/Desktop/Data/USC/DARPA-NEAT/Code/SENTINEL"
@@ -14,7 +14,7 @@ cd "$PROJECT_PATH" || exit
 
 PYTHON_SCRIPT="main.py"
 
-SAVE_PATH="/Users/woojaejeong/Desktop/Data/USC/DARPA-NEAT/Code/SENTINEL/Results/GroupDecoding/EEGNet"
+SAVE_PATH="/Users/woojaejeong/Desktop/Data/USC/DARPA-NEAT/Code/SENTINEL/Results/GroupDecoding/DeepConvNet"
 
 DATA_PATH="/Users/woojaejeong/Desktop/Data/USC/DARPA-NEAT/Data/Preprocessed data"
 
@@ -27,40 +27,41 @@ COMMON_ARGS=(
     --bPath "$BEHAV_PATH"
     --fileName "Data_sen_lepoch.pkl"
     --trialInfo "$TRIALINFO_PATH"
-    --model_name eegnet
+    --model_type deepconvnet
     --device mps
-    --val_size 0.2
+    --val_size 0.1
     --curve_dir "$SAVE_PATH/curves"
+    --chName None
     --verbose
 )
 
 mkdir -p "$SAVE_PATH/curves"
 
-echo ""
-echo "Running UNIFORM bootstrap (ALL TOI)"
-echo ""
+# echo ""
+# echo "Running UNIFORM bootstrap (ALL TOI)"
+# echo ""
 
-python3 "$PYTHON_SCRIPT" \
-    "${COMMON_ARGS[@]}" \
-    --feature_mode uniform \
-    --toi_mode all \
-    --epochs 40 \
-    --patience 6
+# python3 "$PYTHON_SCRIPT" \
+#     "${COMMON_ARGS[@]}" \
+#     --feature_mode uniform \
+#     --toi_mode all \
+#     --epochs 60 \
+#     --patience 8
 
-echo ""
-echo "Running CONTRAST bootstrap (ALL TOI)"
-echo ""
+# echo ""
+# echo "Running CONTRAST bootstrap (ALL TOI)"
+# echo ""
 
-python3 "$PYTHON_SCRIPT" \
-    "${COMMON_ARGS[@]}" \
-    --feature_mode contrast \
-    --toi_mode all \
-    --epochs 40 \
-    --patience 6
+# python3 "$PYTHON_SCRIPT" \
+#     "${COMMON_ARGS[@]}" \
+#     --feature_mode contrast \
+#     --toi_mode all \
+#     --epochs 60 \
+#     --patience 8
 
-echo ""
-echo "Running sentence response (ALL TOI)"
-echo ""
+# echo ""
+# echo "Running sentence response (ALL TOI)"
+# echo ""
 
 python3 "$PYTHON_SCRIPT" \
     "${COMMON_ARGS[@]}" \
@@ -77,8 +78,8 @@ python3 "$PYTHON_SCRIPT" \
     "${COMMON_ARGS[@]}" \
     --feature_mode uniform \
     --toi_mode non_bio \
-    --epochs 40 \
-    --patience 6
+    --epochs 60 \
+    --patience 8
 
 echo ""
 echo "Running CONTRAST bootstrap (NON-BIO only)"
@@ -88,8 +89,8 @@ python3 "$PYTHON_SCRIPT" \
     "${COMMON_ARGS[@]}" \
     --feature_mode contrast \
     --toi_mode non_bio \
-    --epochs 40 \
-    --patience 6
+    --epochs 60 \
+    --patience 8
 
 echo ""
 echo "Running sentence response (NON-BIO only)"
