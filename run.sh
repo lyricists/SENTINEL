@@ -20,7 +20,7 @@ DATA_PATH="/Users/woojaejeong/Desktop/Data/USC/DARPA-NEAT/Data/Preprocessed data
 
 BEHAV_PATH="/Users/woojaejeong/Desktop/Data/USC/DARPA-NEAT/Data/Behavior"
 
-TRIALINFO_PATH="/Users/woojaejeong/Desktop/Data/USC/DARPA-NEAT/Code/SENTINEL/Results/trial_sentence_rank_info.pkl"
+TRIALINFO_PATH="/Users/woojaejeong/Desktop/Data/USC/DARPA-NEAT/Code/SENTINEL/Results/trial_sentence_rank_info_dl.pkl"
 
 COMMON_ARGS=(
     --fPath "$DATA_PATH"
@@ -47,7 +47,7 @@ python3 "$PYTHON_SCRIPT" \
     --feature_mode uniform \
     --toi_mode all \
     --epochs 60 \
-    --patience 8
+    --patience 15
 
 echo ""
 echo "Running CONTRAST bootstrap (ALL TOI)"
@@ -58,7 +58,7 @@ python3 "$PYTHON_SCRIPT" \
     --feature_mode contrast \
     --toi_mode all \
     --epochs 60 \
-    --patience 8
+    --patience 15
 
 echo ""
 echo "Running sentence response (ALL TOI)"
@@ -69,7 +69,7 @@ python3 "$PYTHON_SCRIPT" \
     --feature_mode sentence_response \
     --toi_mode all \
     --epochs 60 \
-    --patience 50
+    --patience 15
 
 echo ""
 echo "Running UNIFORM bootstrap (NON-BIO only)"
@@ -80,7 +80,7 @@ python3 "$PYTHON_SCRIPT" \
     --feature_mode uniform \
     --toi_mode non_bio \
     --epochs 60 \
-    --patience 8
+    --patience 15
 
 echo ""
 echo "Running CONTRAST bootstrap (NON-BIO only)"
@@ -91,7 +91,7 @@ python3 "$PYTHON_SCRIPT" \
     --feature_mode contrast \
     --toi_mode non_bio \
     --epochs 60 \
-    --patience 8
+    --patience 15
 
 echo ""
 echo "Running sentence response (NON-BIO only)"
@@ -101,8 +101,8 @@ python3 "$PYTHON_SCRIPT" \
     "${COMMON_ARGS[@]}" \
     --feature_mode sentence_response \
     --toi_mode non_bio \
-    --epochs 100 \
-    --patience 50
+    --epochs 60 \
+    --patience 15
 
 echo ""
 echo "All EEGNet decoding runs completed."
