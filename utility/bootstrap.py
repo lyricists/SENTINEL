@@ -1,6 +1,42 @@
 import numpy as np
 
 
+def sentence_response_average(X, trialInfo, sub, trial_indices):
+    """
+    Average repeated trials within each sentence.
+
+    X:
+        ch x time x trial
+
+    trial_indices:
+        selected EEG trial indices for one rank chunk
+
+    Returns:
+        X_sent: n_sentences x ch x time
+    """
+
+    sentence_to_trials = {}
+
+    for trial_idx in trial_indices:
+        sentence = trialInfo[sub][trial_idx]["Sentence"]
+
+        if sentence not in sentence_to_trials:
+            sentence_to_trials[sentence] = []
+
+        sentence_to_trials[sentence].append(int(trial_idx))
+
+    X_sent = []
+
+    for sentence, idxs in sentence_to_trials.items():
+        avg_response = X[:, :, idxs].mean(axis=2)
+        X_sent.append(avg_response)
+
+    if len(X_sent) == 0:
+        return None
+
+    return np.stack(X_sent, axis=0)
+
+
 def uniform_bootstrap_trials(X, trial_indices, n_aug=200, k=12, replace=True):
     """
     X: ch x time x trial
