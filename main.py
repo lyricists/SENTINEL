@@ -279,7 +279,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--early_stop_metric",
         type=str,
-        default="val_balanced_accuracy",
+        default="val_loss",
         choices=["val_loss", "val_balanced_accuracy"],
     )
 
