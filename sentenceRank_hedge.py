@@ -343,4 +343,5 @@ if __name__ == "__main__":
         n_components=3,
     )
 
+    analyzer.run()
     # sentence_features, ranking_results, senIdx = analyzer.run()
